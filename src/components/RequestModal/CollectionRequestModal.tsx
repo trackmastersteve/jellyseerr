@@ -13,10 +13,11 @@ import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { Collection } from '@server/models/Collection';
+import axios from 'axios';
 import { useCallback, useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import { useToasts } from 'react-toast-notifications';
-import useSWR from 'swr';
+import useSWR, { mutate } from 'swr';
 
 const messages = defineMessages('components.RequestModal', {
   requestadmin: 'This request will be approved automatically.',
@@ -198,19 +199,12 @@ const CollectionRequestModal = ({
         (
           data?.parts.filter((part) => selectedParts.includes(part.id)) ?? []
         ).map(async (part) => {
-          const res = await fetch('/api/v1/request', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              mediaId: part.id,
-              mediaType: 'movie',
-              is4k,
-              ...overrideParams,
-            }),
+          await axios.post<MediaRequest>('/api/v1/request', {
+            mediaId: part.id,
+            mediaType: 'movie',
+            is4k,
+            ...overrideParams,
           });
-          if (!res.ok) throw new Error();
         })
       );
 
@@ -220,6 +214,7 @@ const CollectionRequestModal = ({
             ? MediaStatus.UNKNOWN
             : MediaStatus.PARTIALLY_AVAILABLE
         );
+        mutate('/api/v1/request/count');
       }
 
       addToast(
@@ -239,7 +234,16 @@ const CollectionRequestModal = ({
     } finally {
       setIsUpdating(false);
     }
-  }, [requestOverrides, data, onComplete, addToast, intl, selectedParts, is4k]);
+  }, [
+    requestOverrides,
+    data?.parts,
+    data?.name,
+    onComplete,
+    addToast,
+    intl,
+    selectedParts,
+    is4k,
+  ]);
 
   const hasAutoApprove = hasPermission(
     [
@@ -441,7 +445,7 @@ const CollectionRequestModal = ({
                                 src={
                                   part.posterPath
                                     ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${part.posterPath}`
-                                    : '/images/overseerr_poster_not_found.png'
+                                    : '/images/jellyseerr_poster_not_found.png'
                                 }
                                 alt=""
                                 sizes="100vw"

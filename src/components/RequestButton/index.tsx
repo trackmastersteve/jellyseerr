@@ -13,8 +13,10 @@ import {
 import { MediaRequestStatus, MediaStatus } from '@server/constants/media';
 import type Media from '@server/entity/Media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
+import axios from 'axios';
 import { useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
+import { mutate } from 'swr';
 
 const messages = defineMessages('components.RequestButton', {
   viewrequest: 'View Request',
@@ -93,14 +95,11 @@ const RequestButton = ({
     request: MediaRequest,
     type: 'approve' | 'decline'
   ) => {
-    const res = await fetch(`/api/v1/request/${request.id}/${type}`, {
-      method: 'POST',
-    });
-    if (!res.ok) throw new Error();
-    const data = await res.json();
+    const response = await axios.post(`/api/v1/request/${request.id}/${type}`);
 
-    if (data) {
+    if (response) {
       onUpdate();
+      mutate('/api/v1/request/count');
     }
   };
 
@@ -114,15 +113,12 @@ const RequestButton = ({
 
     await Promise.all(
       requests.map(async (request) => {
-        const res = await fetch(`/api/v1/request/${request.id}/${type}`, {
-          method: 'POST',
-        });
-        if (!res.ok) throw new Error();
-        return res.json();
+        return axios.post(`/api/v1/request/${request.id}/${type}`);
       })
     );
 
     onUpdate();
+    mutate('/api/v1/request/count');
   };
 
   const buttons: ButtonOption[] = [];

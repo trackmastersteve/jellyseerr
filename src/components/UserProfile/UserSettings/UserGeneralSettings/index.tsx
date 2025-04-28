@@ -16,6 +16,7 @@ import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import { ApiErrorCode } from '@server/constants/error';
 import type { UserSettingsGeneralResponse } from '@server/interfaces/api/userSettingsInterfaces';
+import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -44,10 +45,16 @@ const messages = defineMessages(
     toastSettingsSuccess: 'Settings saved successfully!',
     toastSettingsFailure: 'Something went wrong while saving settings.',
     toastSettingsFailureEmail: 'This email is already taken!',
+    toastSettingsFailureEmailEmpty:
+      'Another user already has this username. You must set an email',
     region: 'Discover Region',
     regionTip: 'Filter content by regional availability',
+    discoverRegion: 'Discover Region',
+    discoverRegionTip: 'Filter content by regional availability',
     originallanguage: 'Discover Language',
     originallanguageTip: 'Filter content by original language',
+    streamingRegion: 'Streaming Region',
+    streamingRegionTip: 'Show streaming sites by regional availability',
     movierequestlimit: 'Movie Request Limit',
     seriesrequestlimit: 'Series Request Limit',
     enableOverride: 'Override Global Limit',
@@ -94,7 +101,9 @@ const UserGeneralSettings = () => {
 
   const UserGeneralSettingsSchema = Yup.object().shape({
     email:
-      user?.id === 1
+      // email is required for everybody except non-admin jellyfin users
+      user?.id === 1 ||
+      (user?.userType !== UserType.JELLYFIN && user?.userType !== UserType.EMBY)
         ? Yup.string()
             .email(intl.formatMessage(messages.validationemailformat))
             .required(intl.formatMessage(messages.validationemailrequired))
@@ -138,11 +147,12 @@ const UserGeneralSettings = () => {
       </div>
       <Formik
         initialValues={{
-          displayName: data?.username ?? '',
+          displayName: data?.username !== user?.email ? data?.username : '',
           email: data?.email?.includes('@') ? data.email : '',
           discordId: data?.discordId ?? '',
           locale: data?.locale,
-          region: data?.region,
+          discoverRegion: data?.discoverRegion,
+          streamingRegion: data?.streamingRegion,
           originalLanguage: data?.originalLanguage,
           movieQuotaLimit: data?.movieQuotaLimit,
           movieQuotaDays: data?.movieQuotaDays,
@@ -155,32 +165,24 @@ const UserGeneralSettings = () => {
         enableReinitialize
         onSubmit={async (values) => {
           try {
-            const res = await fetch(`/api/v1/user/${user?.id}/settings/main`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                username: values.displayName,
-                email:
-                  values.email || user?.jellyfinUsername || user?.plexUsername,
-                discordId: values.discordId,
-                locale: values.locale,
-                region: values.region,
-                originalLanguage: values.originalLanguage,
-                movieQuotaLimit: movieQuotaEnabled
-                  ? values.movieQuotaLimit
-                  : null,
-                movieQuotaDays: movieQuotaEnabled
-                  ? values.movieQuotaDays
-                  : null,
-                tvQuotaLimit: tvQuotaEnabled ? values.tvQuotaLimit : null,
-                tvQuotaDays: tvQuotaEnabled ? values.tvQuotaDays : null,
-                watchlistSyncMovies: values.watchlistSyncMovies,
-                watchlistSyncTv: values.watchlistSyncTv,
-              }),
+            await axios.post(`/api/v1/user/${user?.id}/settings/main`, {
+              username: values.displayName,
+              email:
+                values.email || user?.jellyfinUsername || user?.plexUsername,
+              discordId: values.discordId,
+              locale: values.locale,
+              discoverRegion: values.discoverRegion,
+              streamingRegion: values.streamingRegion,
+              originalLanguage: values.originalLanguage,
+              movieQuotaLimit: movieQuotaEnabled
+                ? values.movieQuotaLimit
+                : null,
+              movieQuotaDays: movieQuotaEnabled ? values.movieQuotaDays : null,
+              tvQuotaLimit: tvQuotaEnabled ? values.tvQuotaLimit : null,
+              tvQuotaDays: tvQuotaEnabled ? values.tvQuotaDays : null,
+              watchlistSyncMovies: values.watchlistSyncMovies,
+              watchlistSyncTv: values.watchlistSyncTv,
             });
-            if (!res.ok) throw new Error(res.statusText, { cause: res });
 
             if (currentUser?.id === user?.id && setLocale) {
               setLocale(
@@ -195,18 +197,24 @@ const UserGeneralSettings = () => {
               appearance: 'success',
             });
           } catch (e) {
-            let errorData;
-            try {
-              errorData = await e.cause?.text();
-              errorData = JSON.parse(errorData);
-            } catch {
-              /* empty */
-            }
-            if (errorData?.message === ApiErrorCode.InvalidEmail) {
-              addToast(intl.formatMessage(messages.toastSettingsFailureEmail), {
-                autoDismiss: true,
-                appearance: 'error',
-              });
+            if (e?.response?.data?.message === ApiErrorCode.InvalidEmail) {
+              if (values.email) {
+                addToast(
+                  intl.formatMessage(messages.toastSettingsFailureEmail),
+                  {
+                    autoDismiss: true,
+                    appearance: 'error',
+                  }
+                );
+              } else {
+                addToast(
+                  intl.formatMessage(messages.toastSettingsFailureEmailEmpty),
+                  {
+                    autoDismiss: true,
+                    appearance: 'error',
+                  }
+                );
+              }
             } else {
               addToast(intl.formatMessage(messages.toastSettingsFailure), {
                 autoDismiss: true,
@@ -284,9 +292,9 @@ const UserGeneralSettings = () => {
                       name="displayName"
                       type="text"
                       placeholder={
-                        user?.username ||
                         user?.jellyfinUsername ||
-                        user?.plexUsername
+                        user?.plexUsername ||
+                        user?.email
                       }
                     />
                   </div>
@@ -385,17 +393,17 @@ const UserGeneralSettings = () => {
                 </div>
               </div>
               <div className="form-row">
-                <label htmlFor="displayName" className="text-label">
-                  <span>{intl.formatMessage(messages.region)}</span>
+                <label htmlFor="discoverRegion" className="text-label">
+                  <span>{intl.formatMessage(messages.discoverRegion)}</span>
                   <span className="label-tip">
-                    {intl.formatMessage(messages.regionTip)}
+                    {intl.formatMessage(messages.discoverRegionTip)}
                   </span>
                 </label>
                 <div className="form-input-area">
-                  <div className="form-input-field">
+                  <div className="form-input-field relative z-[22]">
                     <RegionSelector
-                      name="region"
-                      value={values.region ?? ''}
+                      name="discoverRegion"
+                      value={values.discoverRegion ?? ''}
                       isUserSetting
                       onChange={setFieldValue}
                     />
@@ -410,12 +418,32 @@ const UserGeneralSettings = () => {
                   </span>
                 </label>
                 <div className="form-input-area">
-                  <div className="form-input-field">
+                  <div className="form-input-field relative z-[21]">
                     <LanguageSelector
                       setFieldValue={setFieldValue}
                       serverValue={currentSettings.originalLanguage}
                       value={values.originalLanguage}
                       isUserSettings
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="form-row">
+                <label htmlFor="streamingRegionTip" className="text-label">
+                  <span>{intl.formatMessage(messages.streamingRegion)}</span>
+                  <span className="label-tip">
+                    {intl.formatMessage(messages.streamingRegionTip)}
+                  </span>
+                </label>
+                <div className="form-input-area">
+                  <div className="form-input-field relative z-20">
+                    <RegionSelector
+                      name="streamingRegion"
+                      value={values.streamingRegion || ''}
+                      isUserSetting
+                      onChange={setFieldValue}
+                      regionType="streaming"
+                      disableAll
                     />
                   </div>
                 </div>

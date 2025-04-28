@@ -1,8 +1,8 @@
+import BlacklistedTagsSelector from '@app/components/BlacklistedTagsSelector';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
-import Tooltip from '@app/components/Common/Tooltip';
 import LanguageSelector from '@app/components/LanguageSelector';
 import RegionSelector from '@app/components/RegionSelector';
 import CopyButton from '@app/components/Settings/CopyButton';
@@ -17,6 +17,7 @@ import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/24/solid';
 import type { UserSettingsGeneralResponse } from '@server/interfaces/api/userSettingsInterfaces';
 import type { MainSettings } from '@server/lib/settings';
+import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
 import { useIntl } from 'react-intl';
 import { useToasts } from 'react-toast-notifications';
@@ -29,31 +30,34 @@ const messages = defineMessages('components.Settings.SettingsMain', {
   generalsettingsDescription:
     'Configure global and default settings for Jellyseerr.',
   apikey: 'API Key',
+  apikeyCopied: 'Copied API key to clipboard.',
   applicationTitle: 'Application Title',
   applicationurl: 'Application URL',
-  region: 'Discover Region',
-  regionTip: 'Filter content by regional availability',
+  discoverRegion: 'Discover Region',
+  discoverRegionTip: 'Filter content by regional availability',
   originallanguage: 'Discover Language',
   originallanguageTip: 'Filter content by original language',
+  blacklistedTags: 'Blacklist Content with Tags',
+  blacklistedTagsTip:
+    'Automatically add content with tags to the blacklist using the "Process Blacklisted Tags" job',
+  blacklistedTagsLimit: 'Limit Content Blacklisted per Tag',
+  blacklistedTagsLimitTip:
+    'The "Process Blacklisted Tags" job will blacklist this many pages into each sort. Larger numbers will create a more accurate blacklist, but use more space.',
+  streamingRegion: 'Streaming Region',
+  streamingRegionTip: 'Show streaming sites by regional availability',
   toastApiKeySuccess: 'New API key generated successfully!',
   toastApiKeyFailure: 'Something went wrong while generating a new API key.',
   toastSettingsSuccess: 'Settings saved successfully!',
   toastSettingsFailure: 'Something went wrong while saving settings.',
   hideAvailable: 'Hide Available Media',
-  csrfProtection: 'Enable CSRF Protection',
-  csrfProtectionTip: 'Set external API access to read-only (requires HTTPS)',
-  csrfProtectionHoverTip:
-    'Do NOT enable this setting unless you understand what you are doing!',
   cacheImages: 'Enable Image Caching',
   cacheImagesTip:
     'Cache externally sourced images (requires a significant amount of disk space)',
-  trustProxy: 'Enable Proxy Support',
-  trustProxyTip:
-    'Allow Jellyseerr to correctly register client IP addresses behind a proxy',
   validationApplicationTitle: 'You must provide an application title',
   validationApplicationUrl: 'You must provide a valid URL',
   validationApplicationUrlTrailingSlash: 'URL must not end in a trailing slash',
   partialRequestsEnabled: 'Allow Partial Series Requests',
+  enableSpecialEpisodes: 'Allow Special Episodes Requests',
   locale: 'Display Language',
 });
 
@@ -76,20 +80,31 @@ const SettingsMain = () => {
       intl.formatMessage(messages.validationApplicationTitle)
     ),
     applicationUrl: Yup.string()
-      .url(intl.formatMessage(messages.validationApplicationUrl))
+      .matches(
+        /^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._+~#=]{1,256}(\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&/=]*))?$/i,
+        intl.formatMessage(messages.validationApplicationUrl)
+      )
       .test(
         'no-trailing-slash',
         intl.formatMessage(messages.validationApplicationUrlTrailingSlash),
         (value) => !value || !value.endsWith('/')
       ),
+    blacklistedTagsLimit: Yup.number()
+      .test(
+        'positive',
+        'Number must be greater than 0.',
+        (value) => (value ?? 0) >= 0
+      )
+      .test(
+        'lte-250',
+        'Number must be less than or equal to 250.',
+        (value) => (value ?? 0) <= 250
+      ),
   });
 
   const regenerate = async () => {
     try {
-      const res = await fetch('/api/v1/settings/main/regenerate', {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error();
+      await axios.post('/api/v1/settings/main/regenerate');
 
       revalidate();
       addToast(intl.formatMessage(messages.toastApiKeySuccess), {
@@ -129,38 +144,35 @@ const SettingsMain = () => {
           initialValues={{
             applicationTitle: data?.applicationTitle,
             applicationUrl: data?.applicationUrl,
-            csrfProtection: data?.csrfProtection,
             hideAvailable: data?.hideAvailable,
             locale: data?.locale ?? 'en',
-            region: data?.region,
+            discoverRegion: data?.discoverRegion,
             originalLanguage: data?.originalLanguage,
+            streamingRegion: data?.streamingRegion || 'US',
+            blacklistedTags: data?.blacklistedTags,
+            blacklistedTagsLimit: data?.blacklistedTagsLimit || 50,
             partialRequestsEnabled: data?.partialRequestsEnabled,
-            trustProxy: data?.trustProxy,
+            enableSpecialEpisodes: data?.enableSpecialEpisodes,
             cacheImages: data?.cacheImages,
           }}
           enableReinitialize
           validationSchema={MainSettingsSchema}
           onSubmit={async (values) => {
             try {
-              const res = await fetch('/api/v1/settings/main', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  applicationTitle: values.applicationTitle,
-                  applicationUrl: values.applicationUrl,
-                  csrfProtection: values.csrfProtection,
-                  hideAvailable: values.hideAvailable,
-                  locale: values.locale,
-                  region: values.region,
-                  originalLanguage: values.originalLanguage,
-                  partialRequestsEnabled: values.partialRequestsEnabled,
-                  trustProxy: values.trustProxy,
-                  cacheImages: values.cacheImages,
-                }),
+              await axios.post('/api/v1/settings/main', {
+                applicationTitle: values.applicationTitle,
+                applicationUrl: values.applicationUrl,
+                hideAvailable: values.hideAvailable,
+                locale: values.locale,
+                discoverRegion: values.discoverRegion,
+                streamingRegion: values.streamingRegion,
+                originalLanguage: values.originalLanguage,
+                blacklistedTags: values.blacklistedTags,
+                blacklistedTagsLimit: values.blacklistedTagsLimit,
+                partialRequestsEnabled: values.partialRequestsEnabled,
+                enableSpecialEpisodes: values.enableSpecialEpisodes,
+                cacheImages: values.cacheImages,
               });
-              if (!res.ok) throw new Error();
               mutate('/api/v1/settings/public');
               mutate('/api/v1/status');
 
@@ -212,6 +224,9 @@ const SettingsMain = () => {
                         />
                         <CopyButton
                           textToCopy={data?.apiKey ?? ''}
+                          toastMessage={intl.formatMessage(
+                            messages.apikeyCopied
+                          )}
                           key={data?.apiKey}
                         />
                         <button
@@ -220,6 +235,7 @@ const SettingsMain = () => {
                             regenerate();
                           }}
                           className="input-action"
+                          type="button"
                         >
                           <ArrowPathIcon />
                         </button>
@@ -264,58 +280,6 @@ const SettingsMain = () => {
                       typeof errors.applicationUrl === 'string' && (
                         <div className="error">{errors.applicationUrl}</div>
                       )}
-                  </div>
-                </div>
-                <div className="form-row">
-                  <label htmlFor="trustProxy" className="checkbox-label">
-                    <span className="mr-2">
-                      {intl.formatMessage(messages.trustProxy)}
-                    </span>
-                    <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.trustProxyTip)}
-                    </span>
-                  </label>
-                  <div className="form-input-area">
-                    <Field
-                      type="checkbox"
-                      id="trustProxy"
-                      name="trustProxy"
-                      onChange={() => {
-                        setFieldValue('trustProxy', !values.trustProxy);
-                      }}
-                    />
-                  </div>
-                </div>
-                <div className="form-row">
-                  <label htmlFor="csrfProtection" className="checkbox-label">
-                    <span className="mr-2">
-                      {intl.formatMessage(messages.csrfProtection)}
-                    </span>
-                    <SettingsBadge badgeType="advanced" className="mr-2" />
-                    <SettingsBadge badgeType="restartRequired" />
-                    <span className="label-tip">
-                      {intl.formatMessage(messages.csrfProtectionTip)}
-                    </span>
-                  </label>
-                  <div className="form-input-area">
-                    <Tooltip
-                      content={intl.formatMessage(
-                        messages.csrfProtectionHoverTip
-                      )}
-                    >
-                      <Field
-                        type="checkbox"
-                        id="csrfProtection"
-                        name="csrfProtection"
-                        onChange={() => {
-                          setFieldValue(
-                            'csrfProtection',
-                            !values.csrfProtection
-                          );
-                        }}
-                      />
-                    </Tooltip>
                   </div>
                 </div>
                 <div className="form-row">
@@ -364,17 +328,17 @@ const SettingsMain = () => {
                   </div>
                 </div>
                 <div className="form-row">
-                  <label htmlFor="region" className="text-label">
-                    <span>{intl.formatMessage(messages.region)}</span>
+                  <label htmlFor="discoverRegion" className="text-label">
+                    <span>{intl.formatMessage(messages.discoverRegion)}</span>
                     <span className="label-tip">
-                      {intl.formatMessage(messages.regionTip)}
+                      {intl.formatMessage(messages.discoverRegionTip)}
                     </span>
                   </label>
                   <div className="form-input-area">
                     <div className="form-input-field">
                       <RegionSelector
-                        value={values.region ?? ''}
-                        name="region"
+                        value={values.discoverRegion ?? ''}
+                        name="discoverRegion"
                         onChange={setFieldValue}
                       />
                     </div>
@@ -388,12 +352,74 @@ const SettingsMain = () => {
                     </span>
                   </label>
                   <div className="form-input-area">
-                    <div className="form-input-field">
+                    <div className="form-input-field relative z-30">
                       <LanguageSelector
                         setFieldValue={setFieldValue}
                         value={values.originalLanguage}
                       />
                     </div>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="streamingRegion" className="text-label">
+                    <span>{intl.formatMessage(messages.streamingRegion)}</span>
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.streamingRegionTip)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <div className="form-input-field relative z-20">
+                      <RegionSelector
+                        value={values.streamingRegion}
+                        name="streamingRegion"
+                        onChange={setFieldValue}
+                        regionType="streaming"
+                        disableAll
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="blacklistedTags" className="text-label">
+                    <span>{intl.formatMessage(messages.blacklistedTags)}</span>
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.blacklistedTagsTip)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <div className="form-input-field relative z-10">
+                      <BlacklistedTagsSelector
+                        defaultValue={values.blacklistedTags}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="blacklistedTagsLimit" className="text-label">
+                    <span className="mr-2">
+                      {intl.formatMessage(messages.blacklistedTagsLimit)}
+                    </span>
+                    <SettingsBadge badgeType="advanced" />
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.blacklistedTagsLimitTip)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      id="blacklistedTagsLimit"
+                      name="blacklistedTagsLimit"
+                      type="text"
+                      inputMode="numeric"
+                      className="short"
+                      placeholder={50}
+                    />
+                    {errors.blacklistedTagsLimit &&
+                      touched.blacklistedTagsLimit &&
+                      typeof errors.blacklistedTagsLimit === 'string' && (
+                        <div className="error">
+                          {errors.blacklistedTagsLimit}
+                        </div>
+                      )}
                   </div>
                 </div>
                 <div className="form-row">
@@ -432,6 +458,29 @@ const SettingsMain = () => {
                         setFieldValue(
                           'partialRequestsEnabled',
                           !values.partialRequestsEnabled
+                        );
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="form-row">
+                  <label
+                    htmlFor="enableSpecialEpisodes"
+                    className="checkbox-label"
+                  >
+                    <span className="mr-2">
+                      {intl.formatMessage(messages.enableSpecialEpisodes)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <Field
+                      type="checkbox"
+                      id="enableSpecialEpisodes"
+                      name="enableSpecialEpisodes"
+                      onChange={() => {
+                        setFieldValue(
+                          'enableSpecialEpisodes',
+                          !values.enableSpecialEpisodes
                         );
                       }}
                     />

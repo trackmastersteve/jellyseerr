@@ -17,6 +17,7 @@ import type { NonFunctionProperties } from '@server/interfaces/api/common';
 import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { TvDetails } from '@server/models/Tv';
+import axios from 'axios';
 import { useState } from 'react';
 import { useIntl } from 'react-intl';
 import { useToasts } from 'react-toast-notifications';
@@ -42,7 +43,6 @@ const messages = defineMessages('components.RequestModal', {
   season: 'Season',
   numberofepisodes: '# of Episodes',
   seasonnumber: 'Season {number}',
-  extras: 'Extras',
   errorediting: 'Something went wrong while editing the request.',
   requestedited: 'Request for <strong>{title}</strong> edited successfully!',
   requestApproved: 'Request for <strong>{title}</strong> approved!',
@@ -107,41 +107,30 @@ const TvRequestModal = ({
 
     if (onUpdating) {
       onUpdating(true);
+      mutate('/api/v1/request/count');
     }
 
     try {
       if (selectedSeasons.length > 0) {
-        const res = await fetch(`/api/v1/request/${editRequest.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            mediaType: 'tv',
-            serverId: requestOverrides?.server,
-            profileId: requestOverrides?.profile,
-            rootFolder: requestOverrides?.folder,
-            languageProfileId: requestOverrides?.language,
-            userId: requestOverrides?.user?.id,
-            tags: requestOverrides?.tags,
-            seasons: selectedSeasons,
-          }),
+        await axios.put(`/api/v1/request/${editRequest.id}`, {
+          mediaType: 'tv',
+          serverId: requestOverrides?.server,
+          profileId: requestOverrides?.profile,
+          rootFolder: requestOverrides?.folder,
+          languageProfileId: requestOverrides?.language,
+          userId: requestOverrides?.user?.id,
+          tags: requestOverrides?.tags,
+          seasons: selectedSeasons,
         });
-        if (!res.ok) throw new Error();
 
         if (alsoApproveRequest) {
-          const res = await fetch(`/api/v1/request/${editRequest.id}/approve`, {
-            method: 'POST',
-          });
-          if (!res.ok) throw new Error();
+          await axios.post(`/api/v1/request/${editRequest.id}/approve`);
         }
       } else {
-        const res = await fetch(`/api/v1/request/${editRequest.id}`, {
-          method: 'DELETE',
-        });
-        if (!res.ok) throw new Error();
+        await axios.delete(`/api/v1/request/${editRequest.id}`);
       }
       mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
+      mutate('/api/v1/request/count');
 
       addToast(
         <span>
@@ -190,6 +179,7 @@ const TvRequestModal = ({
 
     if (onUpdating) {
       onUpdating(true);
+      mutate('/api/v1/request/count');
     }
 
     try {
@@ -204,32 +194,23 @@ const TvRequestModal = ({
           tags: requestOverrides.tags,
         };
       }
-      const res = await fetch('/api/v1/request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          mediaId: data?.id,
-          tvdbId: tvdbId ?? data?.externalIds.tvdbId,
-          mediaType: 'tv',
-          is4k,
-          seasons: settings.currentSettings.partialRequestsEnabled
-            ? selectedSeasons
-            : getAllSeasons().filter(
-                (season) => !getAllRequestedSeasons().includes(season)
-              ),
-          ...overrideParams,
-        }),
+      const response = await axios.post<MediaRequest>('/api/v1/request', {
+        mediaId: data?.id,
+        tvdbId: tvdbId ?? data?.externalIds.tvdbId,
+        mediaType: 'tv',
+        is4k,
+        seasons: settings.currentSettings.partialRequestsEnabled
+          ? selectedSeasons.sort((a, b) => a - b)
+          : getAllSeasons().filter(
+              (season) => !getAllRequestedSeasons().includes(season)
+            ),
+        ...overrideParams,
       });
-      if (!res.ok) throw new Error();
-      const mediaRequest: MediaRequest = await res.json();
-
       mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
 
-      if (mediaRequest) {
+      if (response.data) {
         if (onComplete) {
-          onComplete(mediaRequest.media.status);
+          onComplete(response.data.media.status);
         }
         addToast(
           <span>
@@ -254,11 +235,13 @@ const TvRequestModal = ({
   };
 
   const getAllSeasons = (): number[] => {
-    return (data?.seasons ?? [])
-      .filter(
-        (season) => season.seasonNumber !== 0 && season.episodeCount !== 0
-      )
-      .map((season) => season.seasonNumber);
+    let allSeasons = (data?.seasons ?? []).filter(
+      (season) => season.episodeCount !== 0
+    );
+    if (!settings.currentSettings.enableSpecialEpisodes) {
+      allSeasons = allSeasons.filter((season) => season.seasonNumber > 0);
+    }
+    return allSeasons.map((season) => season.seasonNumber);
   };
 
   const getAllRequestedSeasons = (): number[] => {
@@ -582,7 +565,9 @@ const TvRequestModal = ({
                   {data?.seasons
                     .filter(
                       (season) =>
-                        season.seasonNumber !== 0 && season.episodeCount !== 0
+                        (!settings.currentSettings.enableSpecialEpisodes
+                          ? season.seasonNumber !== 0
+                          : true) && season.episodeCount !== 0
                     )
                     .map((season) => {
                       const seasonRequest = getSeasonRequest(
@@ -660,7 +645,7 @@ const TvRequestModal = ({
                           </td>
                           <td className="whitespace-nowrap px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6">
                             {season.seasonNumber === 0
-                              ? intl.formatMessage(messages.extras)
+                              ? intl.formatMessage(globalMessages.specials)
                               : intl.formatMessage(messages.seasonnumber, {
                                   number: season.seasonNumber,
                                 })}

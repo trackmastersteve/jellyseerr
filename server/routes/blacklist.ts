@@ -2,14 +2,12 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import { Blacklist } from '@server/entity/Blacklist';
 import Media from '@server/entity/Media';
-import { NotFoundError } from '@server/entity/Watchlist';
 import type { BlacklistResultsResponse } from '@server/interfaces/api/blacklistInterfaces';
 import { Permission } from '@server/lib/permissions';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
-import { QueryFailedError } from 'typeorm';
+import { EntityNotFoundError, QueryFailedError } from 'typeorm';
 import { z } from 'zod';
 
 const blacklistRoutes = Router();
@@ -21,40 +19,54 @@ export const blacklistAdd = z.object({
   user: z.coerce.number(),
 });
 
+const blacklistGet = z.object({
+  take: z.coerce.number().int().positive().default(25),
+  skip: z.coerce.number().int().nonnegative().default(0),
+  search: z.string().optional(),
+  filter: z.enum(['all', 'manual', 'blacklistedTags']).optional(),
+});
+
 blacklistRoutes.get(
   '/',
   isAuthenticated([Permission.MANAGE_BLACKLIST, Permission.VIEW_BLACKLIST], {
     type: 'or',
   }),
-  rateLimit({ windowMs: 60 * 1000, max: 50 }),
   async (req, res, next) => {
-    const pageSize = req.query.take ? Number(req.query.take) : 25;
-    const skip = req.query.skip ? Number(req.query.skip) : 0;
-    const search = (req.query.search as string) ?? '';
+    const { take, skip, search, filter } = blacklistGet.parse(req.query);
 
     try {
       let query = getRepository(Blacklist)
         .createQueryBuilder('blacklist')
-        .leftJoinAndSelect('blacklist.user', 'user');
+        .leftJoinAndSelect('blacklist.user', 'user')
+        .where('1 = 1'); // Allow use of andWhere later
 
-      if (search.length > 0) {
-        query = query.where('blacklist.title like :title', {
+      switch (filter) {
+        case 'manual':
+          query = query.andWhere('blacklist.blacklistedTags IS NULL');
+          break;
+        case 'blacklistedTags':
+          query = query.andWhere('blacklist.blacklistedTags IS NOT NULL');
+          break;
+      }
+
+      if (search) {
+        query = query.andWhere('blacklist.title like :title', {
           title: `%${search}%`,
         });
       }
 
       const [blacklistedItems, itemsCount] = await query
         .orderBy('blacklist.createdAt', 'DESC')
-        .take(pageSize)
+        .take(take)
         .skip(skip)
         .getManyAndCount();
 
       return res.status(200).json({
         pageInfo: {
-          pages: Math.ceil(itemsCount / pageSize),
-          pageSize,
+          pages: Math.ceil(itemsCount / take),
+          pageSize: take,
           results: itemsCount,
-          page: Math.ceil(skip / pageSize) + 1,
+          page: Math.ceil(skip / take) + 1,
         },
         results: blacklistedItems,
       } as BlacklistResultsResponse);
@@ -67,6 +79,32 @@ blacklistRoutes.get(
         status: 500,
         message: 'Unable to retrieve blacklisted items.',
       });
+    }
+  }
+);
+
+blacklistRoutes.get(
+  '/:id',
+  isAuthenticated([Permission.MANAGE_BLACKLIST], {
+    type: 'or',
+  }),
+  async (req, res, next) => {
+    try {
+      const blacklisteRepository = getRepository(Blacklist);
+
+      const blacklistItem = await blacklisteRepository.findOneOrFail({
+        where: { tmdbId: Number(req.params.id) },
+      });
+
+      return res.status(200).send(blacklistItem);
+    } catch (e) {
+      if (e instanceof EntityNotFoundError) {
+        return next({
+          status: 401,
+          message: e.message,
+        });
+      }
+      return next({ status: 500, message: e.message });
     }
   }
 );
@@ -134,7 +172,7 @@ blacklistRoutes.delete(
 
       return res.status(204).send();
     } catch (e) {
-      if (e instanceof NotFoundError) {
+      if (e instanceof EntityNotFoundError) {
         return next({
           status: 401,
           message: e.message,

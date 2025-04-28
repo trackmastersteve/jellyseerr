@@ -13,11 +13,13 @@ import type {
   TmdbKeywordSearchResponse,
 } from '@server/api/themoviedb/interfaces';
 import type { GenreSliderItem } from '@server/interfaces/api/discoverInterfaces';
+import type { UserResultsResponse } from '@server/interfaces/api/userInterfaces';
 import type {
   Keyword,
   ProductionCompany,
   WatchProviderDetails,
 } from '@server/models/common';
+import axios from 'axios';
 import { orderBy } from 'lodash';
 import { useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
@@ -29,6 +31,7 @@ const messages = defineMessages('components.Selector', {
   searchKeywords: 'Search keywords…',
   searchGenres: 'Select genres…',
   searchStudios: 'Search studios…',
+  searchUsers: 'Select users…',
   starttyping: 'Starting typing to search.',
   nooptions: 'No results.',
   showmore: 'Show More',
@@ -50,18 +53,21 @@ type SingleVal = {
 type BaseSelectorMultiProps = {
   defaultValue?: string;
   isMulti: true;
+  isDisabled?: boolean;
   onChange: (value: MultiValue<SingleVal> | null) => void;
 };
 
 type BaseSelectorSingleProps = {
   defaultValue?: string;
   isMulti?: false;
+  isDisabled?: boolean;
   onChange: (value: SingleValue<SingleVal> | null) => void;
 };
 
 export const CompanySelector = ({
   defaultValue,
   isMulti,
+  isDisabled,
   onChange,
 }: BaseSelectorSingleProps | BaseSelectorMultiProps) => {
   const intl = useIntl();
@@ -75,9 +81,11 @@ export const CompanySelector = ({
         return;
       }
 
-      const res = await fetch(`/api/v1/studio/${defaultValue}`);
-      if (!res.ok) throw new Error();
-      const studio: ProductionCompany = await res.json();
+      const response = await axios.get<ProductionCompany>(
+        `/api/v1/studio/${defaultValue}`
+      );
+
+      const studio = response.data;
 
       setDefaultDataValue([
         {
@@ -95,15 +103,16 @@ export const CompanySelector = ({
       return [];
     }
 
-    const res = await fetch(
-      `/api/v1/search/company?query=${encodeURIExtraParams(inputValue)}`
+    const results = await axios.get<TmdbCompanySearchResponse>(
+      '/api/v1/search/company',
+      {
+        params: {
+          query: encodeURIExtraParams(inputValue),
+        },
+      }
     );
-    if (!res.ok) {
-      throw new Error('Network response was not ok');
-    }
-    const results: TmdbCompanySearchResponse = await res.json();
 
-    return results.results.map((result) => ({
+    return results.data.results.map((result) => ({
       label: result.name,
       value: result.id,
     }));
@@ -115,6 +124,7 @@ export const CompanySelector = ({
       className="react-select-container"
       classNamePrefix="react-select"
       isMulti={isMulti}
+      isDisabled={isDisabled}
       defaultValue={defaultDataValue}
       defaultOptions
       cacheOptions
@@ -141,6 +151,7 @@ type GenreSelectorProps = (BaseSelectorMultiProps | BaseSelectorSingleProps) & {
 export const GenreSelector = ({
   isMulti,
   defaultValue,
+  isDisabled,
   onChange,
   type,
 }: GenreSelectorProps) => {
@@ -157,15 +168,11 @@ export const GenreSelector = ({
 
       const genres = defaultValue.split(',');
 
-      const res = await fetch(`/api/v1/genres/${type}`);
-      if (!res.ok) {
-        throw new Error('Network response was not ok');
-      }
-      const response: TmdbGenre[] = await res.json();
+      const response = await axios.get<TmdbGenre[]>(`/api/v1/genres/${type}`);
 
       const genreData = genres
-        .filter((genre) => response.find((gd) => gd.id === Number(genre)))
-        .map((g) => response.find((gd) => gd.id === Number(g)))
+        .filter((genre) => response.data.find((gd) => gd.id === Number(genre)))
+        .map((g) => response.data.find((gd) => gd.id === Number(g)))
         .map((g) => ({
           label: g?.name ?? '',
           value: g?.id ?? 0,
@@ -178,11 +185,11 @@ export const GenreSelector = ({
   }, [defaultValue, type]);
 
   const loadGenreOptions = async (inputValue: string) => {
-    const res = await fetch(`/api/v1/discover/genreslider/${type}`);
-    if (!res.ok) throw new Error();
-    const results: GenreSliderItem[] = await res.json();
+    const results = await axios.get<GenreSliderItem[]>(
+      `/api/v1/discover/genreslider/${type}`
+    );
 
-    return results
+    return results.data
       .map((result) => ({
         label: result.name,
         value: result.id,
@@ -201,6 +208,7 @@ export const GenreSelector = ({
       defaultOptions
       cacheOptions
       isMulti={isMulti}
+      isDisabled={isDisabled}
       loadOptions={loadGenreOptions}
       placeholder={intl.formatMessage(messages.searchGenres)}
       onChange={(value) => {
@@ -213,6 +221,7 @@ export const GenreSelector = ({
 
 export const StatusSelector = ({
   isMulti,
+  isDisabled,
   defaultValue,
   onChange,
 }: BaseSelectorMultiProps | BaseSelectorSingleProps) => {
@@ -270,6 +279,7 @@ export const StatusSelector = ({
       defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
       defaultOptions
       isMulti={isMulti}
+      isDisabled={isDisabled}
       loadOptions={loadStatusOptions}
       placeholder={intl.formatMessage(messages.searchStatus)}
       onChange={(value) => {
@@ -282,6 +292,7 @@ export const StatusSelector = ({
 
 export const KeywordSelector = ({
   isMulti,
+  isDisabled,
   defaultValue,
   onChange,
 }: BaseSelectorMultiProps | BaseSelectorSingleProps) => {
@@ -298,13 +309,11 @@ export const KeywordSelector = ({
 
       const keywords = await Promise.all(
         defaultValue.split(',').map(async (keywordId) => {
-          const res = await fetch(`/api/v1/keyword/${keywordId}`);
-          if (!res.ok) {
-            throw new Error('Network response was not ok');
-          }
-          const keyword: Keyword = await res.json();
+          const keyword = await axios.get<Keyword>(
+            `/api/v1/keyword/${keywordId}`
+          );
 
-          return keyword;
+          return keyword.data;
         })
       );
 
@@ -320,15 +329,16 @@ export const KeywordSelector = ({
   }, [defaultValue]);
 
   const loadKeywordOptions = async (inputValue: string) => {
-    const res = await fetch(
-      `/api/v1/search/keyword?query=${encodeURIExtraParams(inputValue)}`
+    const results = await axios.get<TmdbKeywordSearchResponse>(
+      '/api/v1/search/keyword',
+      {
+        params: {
+          query: encodeURIExtraParams(inputValue),
+        },
+      }
     );
-    if (!res.ok) {
-      throw new Error('Network response was not ok');
-    }
-    const results: TmdbKeywordSearchResponse = await res.json();
 
-    return results.results.map((result) => ({
+    return results.data.results.map((result) => ({
       label: result.name,
       value: result.id,
     }));
@@ -339,6 +349,7 @@ export const KeywordSelector = ({
       key={`keyword-select-${defaultDataValue}`}
       inputId="data"
       isMulti={isMulti}
+      isDisabled={isDisabled}
       className="react-select-container"
       classNamePrefix="react-select"
       noOptionsMessage={({ inputValue }) =>
@@ -374,7 +385,11 @@ export const WatchProviderSelector = ({
   const { currentSettings } = useSettings();
   const [showMore, setShowMore] = useState(false);
   const [watchRegion, setWatchRegion] = useState(
-    region ? region : currentSettings.region ? currentSettings.region : 'US'
+    region
+      ? region
+      : currentSettings.discoverRegion
+      ? currentSettings.discoverRegion
+      : 'US'
   );
   const [activeProvider, setActiveProvider] = useState<number[]>(
     activeProviders ?? []
@@ -437,7 +452,7 @@ export const WatchProviderSelector = ({
                   key={`prodiver-${provider.id}`}
                 >
                   <div
-                    className={`provider-container relative w-full cursor-pointer rounded-lg p-2 ring-1 ${
+                    className={`provider-container w-full cursor-pointer rounded-lg ring-1 ${
                       isActive
                         ? 'bg-gray-600 ring-indigo-500 hover:bg-gray-500'
                         : 'bg-gray-700 ring-gray-500 hover:bg-gray-600'
@@ -451,18 +466,15 @@ export const WatchProviderSelector = ({
                     role="button"
                     tabIndex={0}
                   >
-                    <CachedImage
-                      type="tmdb"
-                      src={`https://image.tmdb.org/t/p/original${provider.logoPath}`}
-                      alt=""
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                      }}
-                      fill
-                      className="rounded-lg"
-                    />
+                    <div className="relative m-2 aspect-1">
+                      <CachedImage
+                        type="tmdb"
+                        src={`https://image.tmdb.org/t/p/original${provider.logoPath}`}
+                        alt=""
+                        fill
+                        className="rounded-lg object-contain"
+                      />
+                    </div>
                     {isActive && (
                       <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                         <CheckCircleIcon className="h-6 w-6" />
@@ -483,7 +495,7 @@ export const WatchProviderSelector = ({
                     key={`prodiver-${provider.id}`}
                   >
                     <div
-                      className={`provider-container relative w-full cursor-pointer rounded-lg p-2 ring-1 transition ${
+                      className={`provider-container w-full cursor-pointer rounded-lg ring-1 transition ${
                         isActive
                           ? 'bg-gray-600 ring-indigo-500 hover:bg-gray-500'
                           : 'bg-gray-700 ring-gray-500 hover:bg-gray-600'
@@ -497,18 +509,15 @@ export const WatchProviderSelector = ({
                       role="button"
                       tabIndex={0}
                     >
-                      <CachedImage
-                        type="tmdb"
-                        src={`https://image.tmdb.org/t/p/original${provider.logoPath}`}
-                        alt=""
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'cover',
-                        }}
-                        fill
-                        className="rounded-lg"
-                      />
+                      <div className="relative m-2 aspect-1">
+                        <CachedImage
+                          type="tmdb"
+                          src={`https://image.tmdb.org/t/p/original${provider.logoPath}`}
+                          alt=""
+                          fill
+                          className="rounded-lg object-contain"
+                        />
+                      </div>
                       {isActive && (
                         <div className="pointer-events-none absolute -top-1 -left-1 flex items-center justify-center text-indigo-100 opacity-90">
                           <CheckCircleIcon className="h-6 w-6" />
@@ -546,5 +555,79 @@ export const WatchProviderSelector = ({
         </div>
       )}
     </>
+  );
+};
+
+export const UserSelector = ({
+  isMulti,
+  isDisabled,
+  defaultValue,
+  onChange,
+}: BaseSelectorMultiProps | BaseSelectorSingleProps) => {
+  const intl = useIntl();
+  const [defaultDataValue, setDefaultDataValue] = useState<
+    { label: string; value: number }[] | null
+  >(null);
+
+  useEffect(() => {
+    const loadUsers = async (): Promise<void> => {
+      if (!defaultValue) {
+        return;
+      }
+
+      const users = defaultValue.split(',');
+
+      const res = await axios.get(
+        `/api/v1/user?includeIds=${encodeURIComponent(defaultValue)}`
+      );
+      const response: UserResultsResponse = res.data;
+
+      const genreData = users
+        .filter((u) => response.results.find((user) => user.id === Number(u)))
+        .map((u) => response.results.find((user) => user.id === Number(u)))
+        .map((u) => ({
+          label: u?.displayName ?? '',
+          value: u?.id ?? 0,
+        }));
+
+      setDefaultDataValue(genreData);
+    };
+
+    loadUsers();
+  }, [defaultValue]);
+
+  const loadUserOptions = async (inputValue: string) => {
+    const res = await axios.get(
+      `/api/v1/user${inputValue ? `?q=${encodeURIComponent(inputValue)}` : ''}`
+    );
+    const results: UserResultsResponse = res.data;
+
+    return results.results
+      .map((result) => ({
+        label: result.displayName,
+        value: result.id,
+      }))
+      .filter(({ label }) =>
+        label.toLowerCase().includes(inputValue.toLowerCase())
+      );
+  };
+
+  return (
+    <AsyncSelect
+      key={`user-select-${defaultDataValue}`}
+      className="react-select-container"
+      classNamePrefix="react-select"
+      defaultValue={isMulti ? defaultDataValue : defaultDataValue?.[0]}
+      defaultOptions
+      cacheOptions
+      isMulti={isMulti}
+      isDisabled={isDisabled}
+      loadOptions={loadUserOptions}
+      placeholder={intl.formatMessage(messages.searchUsers)}
+      onChange={(value) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onChange(value as any);
+      }}
+    />
   );
 };
